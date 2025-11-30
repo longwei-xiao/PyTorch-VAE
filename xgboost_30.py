@@ -139,8 +139,8 @@ plt.savefig("xgboost/gt.png", dpi=300, bbox_inches='tight')
 import xgboost as xgb
 
 model = xgb.XGBRegressor(
-    n_estimators=300,
-    learning_rate=0.05,
+    n_estimators=500,
+    learning_rate=0.02,
     max_depth=5,
     subsample=1.0,
     colsample_bytree=1.0,
@@ -151,8 +151,8 @@ grid_xy = np.array([(x,y) for y in range(H) for x in range(W)])
 sinr_pred = model.predict(grid_xy)
 sinr_map = sinr_pred.reshape(H, W)
 
-for (x, y), pred in zip(grid_xy, sinr_pred):
-    print(f"({x}, {y}) → {pred:.3f} dB")
+# for (x, y), pred in zip(grid_xy, sinr_pred):
+#     print(f"({x}, {y}) → {pred:.3f} dB")
 
 
 inside_map = np.full((H, W), np.nan, dtype=np.float32)
@@ -170,3 +170,61 @@ plt.savefig("xgboost/XGBoost_SINR.png", dpi=300, bbox_inches='tight')
 
 
 # Calculate MSE and validate
+test_sinr = pd.read_csv("combined_test_sinr.csv")  # 10 × 4200
+sinr_yt, sinr_xt = coords_to_grid_binning(test_sinr[['X','Y']], H, W, img_h, img_w)
+test_indices = np.stack([sinr_yt, sinr_xt], axis=1)
+test_array = test_sinr.iloc[:, 2:].values.astype(np.float32) # (10, 4200)
+num_sensors_t, num_samples_t = test_array.shape
+sensor_mean_raw_t = test_array.mean(axis=1)   # shape (10,)
+
+yst = test_indices[:, 0]
+xst = test_indices[:, 1]
+
+X_test = np.vstack([xst, yst]).T   # (x, y)
+Y_test = sensor_mean_raw_t         # (sinr)
+inside_map_realt = np.full((H, W), np.nan, dtype=np.float32)
+for i in range(len(yst)):
+    y = yst[i]
+    x = xst[i]
+    inside_map_realt[y, x] = sensor_mean_raw_t[i]
+
+plt.figure(figsize=(6,6))
+plt.imshow(inside_map_realt, cmap='viridis', origin='upper')
+plt.colorbar(label="Test Points SINR (dB)")
+plt.title("Test Points SINR (10 Sensors)")
+plt.savefig("xgboost/test.png", dpi=300, bbox_inches='tight')
+
+
+errors = []
+
+for i in range(len(yst)):
+    x = xst[i]
+    y = yst[i]
+    pred = sinr_map[y, x]
+    gt   = sensor_mean_raw_t[i]
+    err  = pred - gt
+    errors.append(err)
+    print(f"Point {i + 1}: (x={x}, y={y})")
+    print(f"  Predicted: {pred:.3f} dB")
+    print(f"  GroundTruth: {gt:.3f} dB")
+    print(f"  Error: {pred - gt:.3f} dB\n")
+
+errors = np.array(errors)   # shape (10,)
+
+# ---- Step 2: create an empty error map ----
+
+error_map = np.full((H, W), np.nan, dtype=np.float32)
+
+# Fill only test points with their error
+for i in range(len(yst)):
+    error_map[yst[i], xst[i]] = errors[i]
+
+
+plt.figure(figsize=(6,6))
+plt.imshow(error_map, cmap="coolwarm", origin='upper')
+plt.colorbar(label="Prediction Error (Pred - GT) dB")
+plt.title("Prediction Error Map (10 Test Points)")
+plt.savefig("xgboost/test_error.png", dpi=300, bbox_inches='tight')
+# plt.show()
+
+print("Saved: xgboost/test_error.png")
