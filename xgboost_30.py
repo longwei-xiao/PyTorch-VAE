@@ -151,6 +151,36 @@ grid_xy = np.array([(x,y) for y in range(H) for x in range(W)])
 sinr_pred = model.predict(grid_xy)
 sinr_map = sinr_pred.reshape(H, W)
 
+################################################################################3
+# data export for visualisation #
+################################################################################3
+
+valid_flat = valid_indices.flatten()
+
+x_coords = grid_xy[:, 0]
+y_coords = grid_xy[:, 1]
+sinr_vals = sinr_pred
+
+inside_x = x_coords[valid_flat]
+inside_y = y_coords[valid_flat]
+inside_sinr = sinr_vals[valid_flat]
+
+export_df = pd.DataFrame({
+    "grid_x": inside_x,
+    "grid_y": inside_y,
+    "predicted_sinr": inside_sinr
+})
+
+export_df.to_csv(
+    "xgboost_sinr.txt",
+    index=False,
+    header=True
+)
+
+print("Saved: xgboost_sinr.txt")
+
+################################################################################3
+
 # for (x, y), pred in zip(grid_xy, sinr_pred):
 #     print(f"({x}, {y}) → {pred:.3f} dB")
 
