@@ -1,20 +1,28 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from torch import nn
+from torch.nn import functional as F
 from typing import List, Tuple
 import math
 
-
-# ---------------- Conditional VAE ----------------
 class ConditionalVAE(nn.Module):
+    """
+    A Conditional Variational Autoencoder (CVAE) implementation.
+
+    It supports two types of decoders:
+    1. A standard CNN-based decoder (activated when coord_decode=False).
+    2. A Coordinate-based MLP decoder (activated when coord_decode=True).
+    The coordinate-based decoder is used for generating outputs at specific
+    query coordinates rather than a full grid.
+    """
     def __init__(self,
                  in_channels: int = 1,
                  loc_channels: int = 2,
                  mask_channels: int = 1,
                  latent_dim: int = 16,
                  hidden_dims: List[int] = [32, 64, 128, 256],
+                 dec_list: List[int] = [256, 256],
                  img_size: int = 40,
-                 coord_decode: bool = True):
+                 coord_decode: bool = True): # coord_decode is set to True by default
         super().__init__()
 
         self.latent_dim = latent_dim
@@ -23,6 +31,7 @@ class ConditionalVAE(nn.Module):
         self.loc_channels = loc_channels
         self.mask_channels = mask_channels
         self.coord_decode = coord_decode
+        self.dec_list = dec_list
 
         # ---------------- Encoder ----------------
         enc_in_channels = in_channels + loc_channels + mask_channels
@@ -49,6 +58,7 @@ class ConditionalVAE(nn.Module):
         self.fc_var = nn.Linear(flat_size, latent_dim)
 
         # ---------------- CNN Decoder (optional) ----------------
+        # The code for the CNN decoder remains but is inactive if coord_decode=True
         if not coord_decode:
             self.decoder_input = nn.Linear(
                 latent_dim + (loc_channels + mask_channels) * img_size * img_size,
@@ -75,18 +85,20 @@ class ConditionalVAE(nn.Module):
             self.final_mu = nn.Conv2d(self.hidden_dims_dec[-1], out_channels=in_channels, kernel_size=3, padding=1)
             self.final_logvar = nn.Conv2d(self.hidden_dims_dec[-1], out_channels=in_channels, kernel_size=3, padding=1)
         else:
-            # ---------------- Coordinate-based decoder ----------------
+            # ---------------- Coordinate-based decoder (Active) ----------------
             self.coord_mlp = nn.Sequential(
-                nn.Linear(latent_dim + 2, 128),
+                nn.Linear(latent_dim + 2, dec_list[0]),
                 nn.ReLU(),
-                nn.Linear(128, 128),
+                nn.Linear(dec_list[0],dec_list[1]),
                 nn.ReLU(),
-                nn.Linear(128, 2)  # predict mu and logvar
+                nn.Linear(dec_list[1], 2)  # predict mu and logvar
             )
+        # 
 
     # ---------------- Static methods ----------------
     @staticmethod
     def compute_encoder_sizes(img_size, hidden_dims, kernel_size=3, stride=2, padding=1):
+        """Computes the spatial size after each convolutional layer."""
         sizes = []
         size = img_size
         for _ in hidden_dims:
@@ -96,6 +108,7 @@ class ConditionalVAE(nn.Module):
 
     # ---------------- Forward methods ----------------
     def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Encodes the input into the latent space parameters (mu, log_var)."""
         result = self.encoder(x)
         result = torch.flatten(result, start_dim=1)
         mu = self.fc_mu(result)
@@ -103,13 +116,27 @@ class ConditionalVAE(nn.Module):
         return mu, log_var
 
     def reparameterize(self, mu: torch.Tensor, log_var: torch.Tensor) -> torch.Tensor:
+        """Performs the reparameterization trick to sample z."""
         std = torch.exp(0.5 * log_var)
         eps = torch.randn_like(std)
         return eps * std + mu
 
     def decode(self, z: torch.Tensor, loc_mask: torch.Tensor = None, meas_mask: torch.Tensor = None,
                coords: torch.Tensor = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Decodes the latent vector z, using either the MLP or CNN path.
+
+        Args:
+            z: Latent vector [B, latent_dim]
+            loc_mask: Location mask for CNN decoder [B, L, H, W]
+            meas_mask: Measurement mask for CNN decoder [B, M, H, W]
+            coords: Query coordinates for MLP decoder [B, N, 2] or [N, 2]
+
+        Returns:
+            Tuple of (mu_pred, logvar_pred)
+        """
         if self.coord_decode:
+            # Coordinate-based decoder path
             if coords.dim() == 2:  # [N,2] -> [1,N,2]
                 coords = coords.unsqueeze(0)
             if coords.shape[0] != z.shape[0]:
@@ -122,7 +149,7 @@ class ConditionalVAE(nn.Module):
             logvar_pred = out[..., 1:2]
             return mu_pred, logvar_pred
         else:
-            # CNN decode (full grid)
+            # CNN decode (full grid) path
             cond = torch.cat([loc_mask, meas_mask], dim=1)
             cond_flat = cond.view(cond.size(0), -1)
             dec_input = torch.cat([z, cond_flat], dim=1)
@@ -143,6 +170,18 @@ class ConditionalVAE(nn.Module):
 
     def forward(self, x: torch.Tensor, loc_mask: torch.Tensor = None, meas_mask: torch.Tensor = None,
                 coords: torch.Tensor = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        The forward pass of the Conditional VAE.
+
+        Args:
+            x: Input image/data [B, C, H, W]
+            loc_mask: Location condition mask [B, L, H, W]
+            meas_mask: Measurement condition mask [B, M, H, W]
+            coords: Query coordinates for coordinate-based decoder [B, N, 2]
+
+        Returns:
+            mu_pred, logvar_pred, mu_latent, logvar_latent
+        """
         # Tile location mask if needed
         if loc_mask is not None and loc_mask.dim() == 3:
             loc_mask = loc_mask.unsqueeze(0).repeat(x.size(0), 1, 1, 1)
@@ -157,13 +196,17 @@ class ConditionalVAE(nn.Module):
         return mu_pred, logvar_pred, mu, log_var
 
     def loss_function(self,
-        mu_pred,         # [B, N, 1] predicted mean at 650 coords
-        logvar_pred,     # [B, N, 1] predicted logvar at 650 coords
-        x_values,        # [B, N, 1] ground truth at 650 coords
-        meas_mask,       # [B, N, 1] 1 for 30 measured pts, 0 otherwise
-        mu, log_var,     # latent distribution params
-        kld_weight=1e-3
-    ):
+        mu_pred: torch.Tensor,         # [B, N, 1] predicted mean at coords
+        logvar_pred: torch.Tensor,     # [B, N, 1] predicted logvar at coords
+        x_values: torch.Tensor,        # [B, N, 1] ground truth at coords
+        meas_mask: torch.Tensor,       # [B, N, 1] 1 for measured pts, 0 otherwise
+        mu: torch.Tensor, log_var: torch.Tensor,     # latent distribution params
+        kld_weight: float = 1e-3
+    ) -> dict:
+        """
+        Computes the CVAE loss: Gaussian Negative Log-Likelihood (NLL) + KL Divergence (KLD).
+        The NLL is computed only over the measured points as specified by meas_mask.
+        """
 
         # -------------------------------------------------------
         # 1. Stabilize predicted log-variance
@@ -175,8 +218,7 @@ class ConditionalVAE(nn.Module):
         const = math.log(2.0 * math.pi)
 
         # -------------------------------------------------------
-        # 2. Gaussian NLL per point
-        #    0.5 * [ (x - μ)^2 / σ²  +  log σ²  + log(2π) ]
+        # 2. Gaussian NLL per point: 0.5 * [ (x - μ)^2 / σ²  +  log σ²  + log(2π) ]
         # -------------------------------------------------------
         nll_element = 0.5 * (
             (x_values - mu_pred)**2 / recon_var +
@@ -185,21 +227,23 @@ class ConditionalVAE(nn.Module):
         )
 
         # -------------------------------------------------------
-        # 3. Apply measurement mask → only 30 points contribute
+        # 3. Apply measurement mask → only measured points contribute
         # -------------------------------------------------------
         nll_element = nll_element * meas_mask   # zeros out non-measured points
 
         # -------------------------------------------------------
         # 4. Normalize per sample by number of measured points
         # -------------------------------------------------------
+        # valid_counts is the number of measured points per sample in the batch
         valid_counts = meas_mask.sum(dim=1).clamp(min=1e-8)  # [B,1]
 
+        # Sum NLL over points, then normalize by count
         nll_per_sample = torch.sum(nll_element, dim=1) / valid_counts  # [B,1] / [B,1]
 
         nll_loss = torch.mean(nll_per_sample)
 
         # -------------------------------------------------------
-        # 5. KL divergence term
+        # 5. KL divergence term (closed form for $\mathcal{N}(\mu, \sigma^2)$ vs $\mathcal{N}(0, 1)$)
         # -------------------------------------------------------
         kld_loss = torch.mean(
             -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp(), dim=1)
@@ -215,3 +259,4 @@ class ConditionalVAE(nn.Module):
             "NLL": nll_loss,
             "KLD": kld_loss
         }
+
