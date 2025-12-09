@@ -258,3 +258,7 @@ plt.savefig("xgboost/test_error.png", dpi=300, bbox_inches='tight')
 # plt.show()
 
 print("Saved: xgboost/test_error.png")
+
+# 3. Calculate Normalized MAE (NMAE)
+nmae = np.mean(errors)
+print(f"Window (1000:2000) NMAE: {nmae}")
