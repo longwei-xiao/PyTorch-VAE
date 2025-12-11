@@ -19,18 +19,68 @@ print(f"  ✓ Map size: {img_w} x {img_h} pixels")
 
 # Define training and test points directly (in pixel coordinates)
 train_points_pixel = np.array([
-    [568, 923], [712, 883], [544, 844], [352, 743], [676, 718],
-    [372, 696], [599, 633], [321, 574], [724, 497], [782, 482],
-    [838, 470], [326, 448], [535, 407], [427, 408], [282, 396],
-    [679, 370], [436, 328], [577, 301], [257, 257], [227, 159],
-    [539, 113], [494, 742], [427, 914], [333, 162], [601, 533],
-    [504, 223], [428, 119], [641, 811], [346, 844], [360, 263]
+    [562, 918],
+    [725, 891],
+    [534, 838],
+    [344, 731],
+    [670, 705],
+    [372, 705],
+    [589, 625],
+    [317, 572],
+    [725, 492],
+    [779, 492],
+    [833, 466],
+    [317, 439],
+    [534, 412],
+    [426, 412],
+    [290, 386],
+    [670, 359],
+    [426, 333],
+    [589, 306],
+    [263, 253],
+    [236, 146],
+    [534, 120],
+    [507, 731],
+    [426, 918],
+    [344, 173],
+    [589, 545],
+    [507, 226],
+    [426, 120],
+    [643, 811],
+    [344, 838],
+    [372, 253]
 ])
+
 
 test_points_pixel = np.array([
     [372, 466], [670, 492], [507, 545], [589, 705], [426, 811],
     [507, 918], [290, 625], [290, 173], [507, 173], [426, 306]
 ])
+
+train_points_pixel_neel = np.array([
+    [568, 923],
+    [712, 883],
+    [544, 844],
+    [352, 743],
+    [676, 718],
+    [372, 696],
+    [599, 633],
+    [321, 574],
+    [724, 497],
+    [782, 482],
+    [838, 470],
+    [326, 448],
+    [535, 407],
+    [427, 408],
+    [282, 396],
+    [679, 370],
+    [436, 328],
+    [577, 301],
+    [257, 257],
+    [227, 159],
+    [539, 113]
+])
+
 
 print(f"  ✓ Training points: {len(train_points_pixel)}")
 print(f"  ✓ Test points: {len(test_points_pixel)}")
@@ -42,7 +92,8 @@ train_pixel_x = train_points_pixel[:, 0]
 train_pixel_y = train_points_pixel[:, 1]
 test_pixel_x = test_points_pixel[:, 0]
 test_pixel_y = test_points_pixel[:, 1]
-
+train_pixel_x_neel = train_points_pixel_neel[:, 0]
+train_pixel_y_neel = train_points_pixel_neel[:, 1]
 # ========== STEP 2: Load prediction grids for all models ==========
 print("\n[2/8] Loading prediction grids...")
 
@@ -261,7 +312,7 @@ print("  ✓ Pixel coordinates added")
 print("\n[6/8] Creating interpolation function...")
 
 def create_interpolated_map(df, img_w, img_h):
-    """Create interpolated heatmap using NEAREST neighbor"""
+    
     if df is None:
         return None
     
@@ -282,7 +333,7 @@ def create_interpolated_map(df, img_w, img_h):
         points, 
         values, 
         (grid_x, grid_y), 
-        method='nearest',
+        method='cubic',
         fill_value=np.nan
     )
     return sinr_interpolated
@@ -329,7 +380,7 @@ print("  ✓ Masks applied")
 # ========== STEP 8: Visualization function ==========
 print("\n[8/8] Generating visualizations...")
 
-def create_visualization(sinr_masked, title, filename, points_x, points_y, point_label, vmin=None, vmax=None):
+def create_visualization(sinr_masked, title, filename, points_x, points_y, point_label, vmin=None, vmax=None, cmap=None):
     """Create visualization with specified measurement points"""
     if sinr_masked is None:
         print(f"  ⊘ Skipped: {filename} (no data)")
@@ -337,6 +388,7 @@ def create_visualization(sinr_masked, title, filename, points_x, points_y, point
  # If vmin or vmax are not provided, compute defaults
     vmin = np.nanmin(sinr_masked) if vmin is None else vmin
     vmax = np.nanmax(sinr_masked) if vmax is None else vmax
+    cmap='viridis' if cmap is None else cmap
     
     fig, ax = plt.subplots(figsize=(16, 16), dpi=150)
     
@@ -344,11 +396,11 @@ def create_visualization(sinr_masked, title, filename, points_x, points_y, point
     
     im = ax.imshow(
         sinr_masked, 
-        cmap='viridis',
+        cmap=cmap,
         origin='upper',
         extent=[0, img_w, img_h, 0],
         alpha=0.85,
-        interpolation='nearest',
+        interpolation='hamming',
         vmin=vmin,
         vmax=vmax
     )
@@ -375,7 +427,7 @@ def create_visualization(sinr_masked, title, filename, points_x, points_y, point
     plt.close()
 
 # Generate all visualizations
-
+"""
 # XGBoost - Prediction Grid (30 training points)
 create_visualization(sinr_xgb_train_masked, 
                     "XGBoost - Prediction Grid",
@@ -389,6 +441,35 @@ create_visualization(sinr_xgb_test_masked,
                     "XGBoost_test.png",
                     test_pixel_x, test_pixel_y, 
                     f"Test Points (n=10)")
+                    """
+# CVAE Mean - Test Grid (10 test points)
+create_visualization(sinr_cvae_test_mu_masked, 
+                    "CVAE Mean - Test Grid",
+                    "CVAE_Mean_test.png",
+                    test_pixel_x, test_pixel_y, 
+                    f"Test Points (n=10)", vmin=24, vmax=30)
+
+# CVAE Std - Test Grid (10 test points)
+create_visualization(sinr_cvae_test_std_masked, 
+                    "CVAE Std - Test Grid",
+                    "CVAE_Std_test.png",
+                    test_pixel_x, test_pixel_y, 
+                    f"Test Points (n=10)",vmin=0, vmax=1.8, cmap='magma' )
+
+
+# CVAE Mean - Prediction Grid (30 training points)
+create_visualization(sinr_cvae_train_mu_masked, 
+                    "CVAE Mean - Prediction Grid",
+                    "CVAE_Mean_train.png",
+                    train_pixel_x, train_pixel_y, 
+                    f"Training Points (n=30)",vmin=24, vmax=30)
+
+# CVAE Std - Prediction Grid (30 training points)
+create_visualization(sinr_cvae_train_std_masked, 
+                    "CVAE Std - Prediction Grid",
+                    "CVAE_Std_train.png",
+                    train_pixel_x, train_pixel_y, 
+                    f"Training Points (n=30)", cmap='magma')
 
 # GPR - Prediction Grid (30 training points)
 create_visualization(sinr_gpr_train_masked, 
@@ -404,48 +485,20 @@ create_visualization(sinr_gpr_test_masked,
                     test_pixel_x, test_pixel_y, 
                     f"Test Points (n=10)")
 
-# CVAE Mean - Prediction Grid (30 training points)
-create_visualization(sinr_cvae_train_mu_masked, 
-                    "CVAE Mean - Prediction Grid",
-                    "CVAE_Mean_train.png",
-                    train_pixel_x, train_pixel_y, 
-                    f"Training Points (n=30)")
-
-# CVAE Std - Prediction Grid (30 training points)
-create_visualization(sinr_cvae_train_std_masked, 
-                    "CVAE Std - Prediction Grid",
-                    "CVAE_Std_train.png",
-                    train_pixel_x, train_pixel_y, 
-                    f"Training Points (n=30)")
-
-# CVAE Mean - Test Grid (10 test points)
-create_visualization(sinr_cvae_test_mu_masked, 
-                    "CVAE Mean - Test Grid",
-                    "CVAE_Mean_test.png",
-                    test_pixel_x, test_pixel_y, 
-                    f"Test Points (n=10)", vmin=24, vmax=30)
-
-# CVAE Std - Test Grid (10 test points)
-create_visualization(sinr_cvae_test_std_masked, 
-                    "CVAE Std - Test Grid",
-                    "CVAE_Std_test.png",
-                    test_pixel_x, test_pixel_y, 
-                    f"Test Points (n=10)",vmin=0, vmax=1.8)
-
 
 # NEEL Mean - Prediction Grid (30 points)
 create_visualization(sinr_neel_mu_masked, 
                     "NEEL Mean - Prediction Grid",
                     "NEEL_Mean_train.png",
-                    train_pixel_x, train_pixel_y, 
-                    f"Training Points (n=30)", vmin=16, vmax=32)
+                    train_pixel_x_neel, train_pixel_y_neel, 
+                    f"Training Points ", vmin=16, vmax=32, cmap='YlOrRd')
 
 # NEEL Std - Prediction Grid (30 points)
 create_visualization(sinr_neel_std_masked, 
                     "NEEL Std - Prediction Grid",
                     "NEEL_Std_train.png",
-                    train_pixel_x, train_pixel_y, 
-                    f"Training Points (n=30)")
+                    train_pixel_x_neel, train_pixel_y_neel,
+                    f"Training Points ", cmap='YlOrRd')
 
 # ========== Summary ==========
 print("\n" + "="*70)
